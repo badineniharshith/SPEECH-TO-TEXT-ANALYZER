@@ -1,55 +1,75 @@
 import tempfile
 import logging
+import os
+import subprocess
+import shlex
+import uuid
+import shutil
 from typing import List, Dict, Union
-import os # NEW IMPORT: Needed for manual file deletion
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 import librosa
-from fastapi.middleware.cors import CORSMiddleware # NEW IMPORT
 
-# ✅ Use official OpenAI Whisper
-import whisper
+# Try to import whisper normally. If you used faster-whisper, adapt accordingly.
+try:
+    import whisper
+except Exception:
+    whisper = None
 
-# --- 1. CONFIGURATION AND INITIALIZATION ---
-
+# ------------------ Logging ------------------
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("speech-analyzer")
 
+# ------------------ Config ------------------
+# Detect ffmpeg on startup
+FFMPEG_PATH = shutil.which("ffmpeg")
+if FFMPEG_PATH:
+    logger.info(f"ffmpeg found at: {FFMPEG_PATH}")
+else:
+    logger.warning("ffmpeg not found on PATH. Audio conversion will fail until ffmpeg is installed.")
+
+# ------------------ Simple vocab lists ------------------
 FILLERS = ["um", "uh", "like", "you know", "so", "actually", "basically"]
 POSITIVE_WORDS = ["good", "great", "amazing", "happy", "love", "excellent", "strong", "positive", "best"]
 NEGATIVE_WORDS = ["bad", "sad", "angry", "hate", "terrible", "poor", "worst", "negative", "awful"]
 
+# ------------------ FastAPI app ------------------
 app = FastAPI(
     title="Interview Coach AI - Speech Analyzer",
     description="Upload an audio file to get a full speech transcription and analysis report."
 )
 
-# --- CORS MIDDLEWARE CONFIGURATION ---
-# The origins array ensures the frontend running on 127.0.0.1:8080 (or localhost)
-# can successfully connect to the FastAPI backend.
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # fine for local dev
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# -----------------------------------
 
-# ✅ Load Whisper model globally
-try:
-    model = whisper.load_model("base")
-    logging.info("✅ Whisper 'base' model loaded successfully.")
-except Exception as e:
-    logging.error(f"❌ Failed to load Whisper model: {e}")
-    model = None
+# ------------------ Health endpoint ------------------
+@app.get("/ping")
+async def ping():
+    return JSONResponse({"status": "ok"})
 
+# ------------------ Load Whisper model safely ------------------
+model = None
+if whisper is None:
+    logger.warning("`whisper` not importable. Make sure you installed `openai-whisper` (pip install openai-whisper) and torch.")
+else:
+    try:
+        # Use "tiny" locally if you want faster startup: whisper.load_model("tiny")
+        model = whisper.load_model("base")
+        logger.info("✅ Whisper 'base' model loaded successfully.")
+    except Exception as e:
+        logger.exception("Failed to load Whisper model (you can try 'tiny' for testing).")
+        model = None
 
-# --- 2. Pydantic Models ---
-
+# ------------------ Pydantic models ------------------
 class FillerAnalysis(BaseModel):
     fillers_found: List[str]
     filler_count: int
@@ -70,97 +90,99 @@ class AnalysisResponse(BaseModel):
     tone_analysis: ToneAnalysis
     pace_analysis: Union[PaceAnalysis, Dict]
 
-
-# --- 3. CORE FUNCTIONS ---
-
+# ------------------ Helper functions ------------------
 def speech_to_text(audio_path: str) -> str:
-    """Transcribes audio using the Whisper model."""
     if not model:
-        raise RuntimeError("Whisper model is not loaded properly.")
-
-    # Using fp16=False for stability, especially on CPUs or older GPUs
+        raise RuntimeError("Whisper model is not loaded.")
     result = model.transcribe(audio_path, fp16=False)
     return result.get("text", "").strip()
 
-
 def filler_detector(text: str) -> FillerAnalysis:
-    """Detects filler words."""
     text_lower = text.lower()
     detected = [word for word in FILLERS if word in text_lower]
     count = sum(text_lower.count(f) for f in FILLERS)
     return FillerAnalysis(fillers_found=detected, filler_count=count)
 
-
 def tone_analyzer(text: str) -> ToneAnalysis:
-    """Performs simple sentiment tone analysis."""
     text_lower = text.lower()
     pos_score = sum(text_lower.count(w) for w in POSITIVE_WORDS)
     neg_score = sum(text_lower.count(w) for w in NEGATIVE_WORDS)
-
     tone = "Neutral"
     if pos_score > neg_score:
         tone = "Positive"
     elif neg_score > pos_score:
         tone = "Negative"
-
     return ToneAnalysis(tone=tone, positive_score=pos_score, negative_score=neg_score)
 
-
 def pace_calculator(audio_path: str, text: str) -> Union[PaceAnalysis, Dict]:
-    """Calculates speech pace (Words Per Minute)."""
     try:
         duration = librosa.get_duration(path=audio_path)
         words = len(text.split())
-        pace_wpm = round(words / (duration / 60), 2) if duration > 0 else 0
+        pace_wpm = round(words / (duration / 60), 2) if duration > 0 else 0.0
+        return PaceAnalysis(duration_sec=round(duration, 2), words=words, pace_wpm=pace_wpm)
+    except Exception:
+        logger.exception("Pace calculation failed")
+        return {"error": "Failed to compute pace"}
 
-        return PaceAnalysis(
-            duration_sec=round(duration, 2),
-            words=words,
-            pace_wpm=pace_wpm
-        )
-    except Exception as e:
-        logging.error(f"Pace calculation failed: {e}")
-        return {"error": str(e)}
-
-
-# --- 4. API ENDPOINTS ---
-
+# ------------------ Endpoints ------------------
 @app.get("/", include_in_schema=False)
 async def redirect_to_docs():
     return RedirectResponse(url="/docs")
 
-
 @app.post("/analyze", response_model=AnalysisResponse)
 async def analyze_audio(file: UploadFile = File(...)):
-    """Main Speech-to-Text and Communication Analyzer."""
+    # Preliminary checks
     if not model:
-        raise HTTPException(status_code=503, detail="Whisper model not available on the server.")
+        raise HTTPException(status_code=503, detail="Whisper model not available on the server. Check logs or install openai-whisper + torch.")
+    if not FFMPEG_PATH:
+        # Friendly message instead of WinError 2
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "ffmpeg executable not found on the server. "
+                "Install ffmpeg and add it to PATH (see server logs). "
+                "On Windows: download from gyan.dev or ffmpeg.org, add the 'bin' folder to PATH, then restart the server."
+            ),
+        )
 
-    # FIX: Use NamedTemporaryFile(delete=False) and manually clean up
-    # This prevents the file from being deleted immediately after the handle is closed, 
-    # ensuring Whisper/Librosa can access it.
-    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=file.filename)
-    tmp_path = tmp_file.name
-    
+    # Save uploaded file
+    orig_ext = os.path.splitext(file.filename)[1] or ".webm"
+    tmp_in = tempfile.NamedTemporaryFile(delete=False, suffix=orig_ext)
+    tmp_in_path = tmp_in.name
+    tmp_out_path = os.path.join(tempfile.gettempdir(), f"conv_{uuid.uuid4().hex}.wav")
+
     try:
-        # Write contents to the temporary file
         contents = await file.read()
-        tmp_file.write(contents)
-        tmp_file.flush()
-        
-        # Explicitly close the file handle BEFORE calling external tools (FFmpeg/Whisper/Librosa)
-        # This releases the file lock (fixes 'Permission denied')
-        tmp_file.close()
-        
-        logging.info(f"Received: {file.filename}, saved to {tmp_path}")
+        tmp_in.write(contents)
+        tmp_in.flush()
+        tmp_in.close()
+        logger.info(f"Saved upload to {tmp_in_path}")
 
-        # --- Transcribe ---
-        text = speech_to_text(tmp_path)
+        # Call ffmpeg with list arguments (no shell) - more reliable on Windows
+        cmd = [
+            FFMPEG_PATH,
+            "-y",
+            "-i", tmp_in_path,
+            "-vn",
+            "-ac", "1",
+            "-ar", "16000",
+            tmp_out_path,
+        ]
+        logger.info("Running ffmpeg: " + " ".join(shlex.quote(p) for p in cmd))
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-        # --- Analyze ---
+        if proc.returncode != 0 or not os.path.exists(tmp_out_path):
+            logger.error(f"ffmpeg failed; stderr: {proc.stderr}")
+            last_line = proc.stderr.splitlines()[-1] if proc.stderr else "ffmpeg error"
+            raise HTTPException(status_code=500, detail=f"Audio conversion failed: {last_line}")
+
+        logger.info(f"Converted audio saved to {tmp_out_path}")
+
+        # Transcribe and analyze
+        text = speech_to_text(tmp_out_path)
         fillers = filler_detector(text)
         tone = tone_analyzer(text)
-        pace = pace_calculator(tmp_path, text)
+        pace = pace_calculator(tmp_out_path, text)
 
         return AnalysisResponse(
             transcription=text,
@@ -168,18 +190,22 @@ async def analyze_audio(file: UploadFile = File(...)):
             tone_analysis=tone,
             pace_analysis=pace,
         )
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logging.error(f"Error during analysis: {e}")
-        # Re-raise as HTTPException for FastAPI to handle
+        logger.exception("Error during analysis")
         raise HTTPException(status_code=500, detail=f"Analysis Failed: {str(e)}")
     finally:
-        # Manually delete the temporary file on exit, ensuring cleanup
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-            logging.info(f"Cleaned up temporary file: {tmp_path}")
+        # Clean up temp files
+        for p in (tmp_in_path, tmp_out_path):
+            try:
+                if p and os.path.exists(p):
+                    os.remove(p)
+                    logger.info(f"Removed temp file {p}")
+            except Exception as cleanup_err:
+                logger.warning(f"Failed to remove {p}: {cleanup_err}")
 
-
-# --- 5. ENTRY POINT ---
-
+# ------------------ Run server ------------------
 if __name__ == "__main__":
     uvicorn.run("app:app", host="127.0.0.1", port=8080, reload=True)
