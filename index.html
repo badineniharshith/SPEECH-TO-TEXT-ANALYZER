@@ -6,10 +6,7 @@
   <title>🎤 Real-Time Speech to Text Analyzer</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    body {
-      font-family: 'Inter', sans-serif;
-      background-color: #f8fafc;
-    }
+    body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
   </style>
 </head>
 <body class="flex flex-col items-center justify-center min-h-screen p-6">
@@ -19,38 +16,23 @@
     </h1>
 
     <div class="flex flex-col items-center space-y-6">
-      <!-- Record Button -->
-      <button
-        id="record-btn"
-        class="px-8 py-3 text-white bg-blue-600 rounded-full hover:bg-blue-700 transition font-semibold shadow-md"
-      >
+      <button id="record-btn" class="px-8 py-3 text-white bg-blue-600 rounded-full hover:bg-blue-700 transition font-semibold shadow-md">
         🎤 Start Recording
       </button>
 
-      <!-- Recording Indicator -->
       <div id="recording-status" class="text-red-600 font-semibold hidden">
         🔴 Recording in progress...
       </div>
 
-      <!-- Loading Spinner -->
       <div id="loading" class="hidden text-blue-600 text-center">
-        <div
-          class="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-current border-r-transparent text-blue-600"
-        ></div>
+        <div class="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-current border-r-transparent text-blue-600"></div>
         <p class="mt-2">Analyzing your speech...</p>
       </div>
 
-      <!-- Error Message -->
-      <p
-        id="error-message"
-        class="hidden bg-red-100 text-red-700 text-sm p-3 rounded-md border border-red-300"
-      ></p>
+      <p id="error-message" class="hidden bg-red-100 text-red-700 text-sm p-3 rounded-md border border-red-300"></p>
 
-      <!-- Results -->
       <div id="results" class="hidden w-full mt-6 space-y-4">
-        <h2 class="text-xl font-semibold text-gray-700 text-center">
-          🧠 Analysis Report
-        </h2>
+        <h2 class="text-xl font-semibold text-gray-700 text-center">🧠 Analysis Report</h2>
 
         <div class="p-4 bg-gray-50 border border-gray-200 rounded-lg">
           <h3 class="text-lg font-semibold text-gray-800">Transcription:</h3>
@@ -78,7 +60,9 @@
   </div>
 
   <script>
+    // UPDATE THIS if your backend runs on a different host/port
     const API_URL = "http://127.0.0.1:8080/analyze";
+
     const recordBtn = document.getElementById("record-btn");
     const recordingStatus = document.getElementById("recording-status");
     const loadingDiv = document.getElementById("loading");
@@ -128,7 +112,7 @@
       try {
         const response = await fetch(API_URL, { method: "POST", body: formData });
         if (!response.ok) {
-          const err = await response.json();
+          const err = await response.json().catch(()=>({detail:"Server error"}));
           throw new Error(err.detail || "Server error");
         }
 
@@ -145,7 +129,7 @@
       document.getElementById("transcription").textContent = data.transcription || "No text found.";
       document.getElementById("fillers").textContent = data.filler_analysis.filler_count;
       document.getElementById("tone").textContent = data.tone_analysis.tone;
-      document.getElementById("pace").textContent = data.pace_analysis.pace_wpm + " WPM";
+      document.getElementById("pace").textContent = (data.pace_analysis.pace_wpm ?? "--") + " WPM";
       resultsDiv.classList.remove("hidden");
     }
 
