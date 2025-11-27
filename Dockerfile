@@ -18,13 +18,12 @@ RUN python -m pip install --upgrade pip setuptools wheel && \
 # Copy code and static files
 COPY . /app
 
-# Optionally pre-download a small model at build time (uncomment to bake 'tiny' into image)
-# WARNING: increases image size and build time
+# Optional: pre-download tiny model at build time to avoid cold-start (comment/uncomment as needed)
 # RUN python -c "import whisper; whisper.load_model('tiny')"
 
-# Render exposes $PORT at runtime; set a default for local testing
+# Expose default port and set a fallback
 ENV PORT=10000
 EXPOSE 10000
 
-# Use Gunicorn with Uvicorn worker for FastAPI. Use 1 worker so the model is loaded only once.
+# Start with Gunicorn + Uvicorn worker. Use one worker to avoid multiple heavy model loads.
 CMD ["sh", "-c", "gunicorn app:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:${PORT} --workers 1 --timeout 120"]
