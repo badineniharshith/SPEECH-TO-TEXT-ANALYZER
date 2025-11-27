@@ -1,4 +1,4 @@
-# Use a slim Python base
+# Use a slim Python image
 FROM python:3.11-slim
 
 # Install system deps (ffmpeg + build tools)
@@ -8,19 +8,23 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-# Copy requirements and install deps
+# Copy requirements and install numpy first to avoid binary mismatch issues
 COPY requirements.txt /app/requirements.txt
 
-# Upgrade pip then install
 RUN python -m pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir numpy==1.26.4 && \
     pip install --no-cache-dir -r /app/requirements.txt
 
-# Copy application code and static files
+# Copy code and static files
 COPY . /app
 
-# Expose port (Render will provide $PORT)
+# Optionally pre-download a small model at build time (uncomment to bake 'tiny' into image)
+# WARNING: increases image size and build time
+# RUN python -c "import whisper; whisper.load_model('tiny')"
+
+# Render exposes $PORT at runtime; set a default for local testing
 ENV PORT=10000
 EXPOSE 10000
 
-# Use Gunicorn with Uvicorn workers and 1 worker (so the Whisper model is loaded only once)
+# Use Gunicorn with Uvicorn worker for FastAPI. Use 1 worker so the model is loaded only once.
 CMD ["sh", "-c", "gunicorn app:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:${PORT} --workers 1 --timeout 120"]
