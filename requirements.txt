@@ -1,6 +1,6 @@
 fastapi==0.95.0
 uvicorn[standard]==0.22.0
-whisper==20240610
+whisper==1.1.10
 librosa==0.10.0
 torch==2.2.0   # choose appropriate CPU/GPU build for your environment
 pydantic==1.10.11
