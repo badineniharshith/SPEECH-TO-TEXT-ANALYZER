@@ -45,7 +45,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # use specific origins in production
+    allow_origins=["*"],  # restrict in production to your frontend domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -77,7 +77,7 @@ async def ping():
 
 # ------------------ Load Whisper model safely ------------------
 model = None
-MODEL_NAME = os.environ.get("MODEL_NAME", "tiny")  # default to tiny for testing
+MODEL_NAME = os.environ.get("MODEL_NAME", "tiny")  # default to tiny for reliable startup
 
 if whisper is None:
     logger.warning("`whisper` import failed. Make sure openai-whisper is installed (openai-whisper==20231117).")
@@ -145,7 +145,7 @@ def pace_calculator(audio_path: str, text: str) -> Union[PaceAnalysis, Dict]:
         logger.exception("Pace calculation failed")
         return {"error": "Failed to compute pace"}
 
-# ------------------ Endpoints ------------------ 
+# ------------------ Endpoints ------------------
 @app.post("/analyze", response_model=AnalysisResponse)
 async def analyze_audio(file: UploadFile = File(...)):
     if not model:
