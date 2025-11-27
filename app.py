@@ -1,6 +1,6 @@
+import os
 import tempfile
 import logging
-import os
 import subprocess
 import shlex
 import uuid
@@ -15,7 +15,7 @@ from pydantic import BaseModel
 import uvicorn
 import librosa
 
-# Try to import whisper normally. If you used faster-whisper, adapt accordingly.
+# Try to import the OpenAI Whisper package (it installs as 'whisper')
 try:
     import whisper
 except Exception:
@@ -26,7 +26,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("speech-analyzer")
 
 # ------------------ Config ------------------
-# Detect ffmpeg on startup
 FFMPEG_PATH = shutil.which("ffmpeg")
 if FFMPEG_PATH:
     logger.info(f"ffmpeg found at: {FFMPEG_PATH}")
@@ -46,7 +45,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # fine for local dev; tighten in production
+    allow_origins=["*"],  # for production, restrict to your domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -54,17 +53,22 @@ app.add_middleware(
 
 # ------------------ Serve static frontend ------------------
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+INDEX_AT_ROOT = os.path.join(os.path.dirname(__file__), "index.html")
+
 if os.path.isdir(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     logger.info(f"Mounted static files from: {STATIC_DIR}")
 else:
-    logger.warning(f"Static directory not found at {STATIC_DIR}. Make sure you have a 'static/index.html' if you want FastAPI to serve the frontend.")
+    logger.warning(f"Static directory not found at {STATIC_DIR}.")
 
 @app.get("/", include_in_schema=False)
 async def serve_index():
+    # prefer static/index.html, then index.html at repo root, else docs
     index_path = os.path.join(STATIC_DIR, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)
+    if os.path.exists(INDEX_AT_ROOT):
+        return FileResponse(INDEX_AT_ROOT)
     return RedirectResponse(url="/docs")
 
 # ------------------ Health endpoint ------------------
@@ -74,13 +78,16 @@ async def ping():
 
 # ------------------ Load Whisper model safely ------------------
 model = None
+# default to tiny for fast startup; set MODEL_NAME=base (or larger) in the environment for production
+MODEL_NAME = os.environ.get("MODEL_NAME", "tiny")
+
 if whisper is None:
-    logger.warning("`whisper` not importable. Make sure you installed `openai-whisper` (pip install openai-whisper) and torch.")
+    logger.warning("`whisper` import failed. Make sure openai-whisper is installed (openai-whisper==20231117).")
 else:
     try:
-        # Use 'tiny' for testing; change to 'base' or larger as needed.
-        model = whisper.load_model("base")
-        logger.info("✅ Whisper 'base' model loaded successfully.")
+        logger.info(f"Loading Whisper model: {MODEL_NAME}")
+        model = whisper.load_model(MODEL_NAME)
+        logger.info(f"✅ Whisper '{MODEL_NAME}' model loaded successfully.")
     except Exception:
         logger.exception("Failed to load Whisper model (you can try 'tiny' for testing).")
         model = None
@@ -145,7 +152,7 @@ def pace_calculator(audio_path: str, text: str) -> Union[PaceAnalysis, Dict]:
 async def analyze_audio(file: UploadFile = File(...)):
     # Preliminary checks
     if not model:
-        raise HTTPException(status_code=503, detail="Whisper model not available on the server. Check logs or install openai-whisper + torch.")
+        raise HTTPException(status_code=503, detail="Whisper model not available on the server. Check logs or set MODEL_NAME env var.")
     if not FFMPEG_PATH:
         raise HTTPException(
             status_code=500,
