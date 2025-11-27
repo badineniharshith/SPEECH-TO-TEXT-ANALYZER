@@ -5,7 +5,7 @@ gunicorn==23.0.0
 pydantic==1.10.11
 python-multipart==0.0.6
 
-# audio / ML
+# ML / audio
 numpy==1.26.4
 torch==2.2.0
 openai-whisper==20231117
