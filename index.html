@@ -56,7 +56,7 @@
   </div>
 
   <script>
-    // use relative path when frontend and backend are served together
+    // IMPORTANT: use relative path so the frontend calls the same origin that served this page
     const API_URL = "/analyze";
 
     const recordBtn = document.getElementById("record-btn");
@@ -123,9 +123,9 @@
 
     function displayResults(data) {
       document.getElementById("transcription").textContent = data.transcription || "No text found.";
-      document.getElementById("fillers").textContent = data.filler_analysis.filler_count;
-      document.getElementById("tone").textContent = data.tone_analysis.tone;
-      document.getElementById("pace").textContent = (data.pace_analysis.pace_wpm ?? "--") + " WPM";
+      document.getElementById("fillers").textContent = data.filler_analysis?.filler_count ?? "--";
+      document.getElementById("tone").textContent = data.tone_analysis?.tone ?? "--";
+      document.getElementById("pace").textContent = (data.pace_analysis?.pace_wpm ?? "--") + " WPM";
       resultsDiv.classList.remove("hidden");
     }
 
