@@ -1,13 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>🎤 Real-Time Speech to Text Analyzer</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
-  </style>
+  <style> body { font-family: 'Inter', sans-serif; background-color: #f8fafc; } </style>
 </head>
 <body class="flex flex-col items-center justify-center min-h-screen p-6">
   <div class="bg-white shadow-lg rounded-2xl p-8 w-full max-w-2xl">
@@ -20,9 +18,7 @@
         🎤 Start Recording
       </button>
 
-      <div id="recording-status" class="text-red-600 font-semibold hidden">
-        🔴 Recording in progress...
-      </div>
+      <div id="recording-status" class="text-red-600 font-semibold hidden">🔴 Recording in progress...</div>
 
       <div id="loading" class="hidden text-blue-600 text-center">
         <div class="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-current border-r-transparent text-blue-600"></div>
@@ -60,8 +56,8 @@
   </div>
 
   <script>
-    // UPDATE THIS if your backend runs on a different host/port
-    const API_URL = "http://127.0.0.1:8080/analyze";
+    // IMPORTANT: use relative path so the frontend calls the same origin that served this page
+    const API_URL = "/analyze";
 
     const recordBtn = document.getElementById("record-btn");
     const recordingStatus = document.getElementById("recording-status");
@@ -127,9 +123,9 @@
 
     function displayResults(data) {
       document.getElementById("transcription").textContent = data.transcription || "No text found.";
-      document.getElementById("fillers").textContent = data.filler_analysis.filler_count;
-      document.getElementById("tone").textContent = data.tone_analysis.tone;
-      document.getElementById("pace").textContent = (data.pace_analysis.pace_wpm ?? "--") + " WPM";
+      document.getElementById("fillers").textContent = data.filler_analysis?.filler_count ?? "--";
+      document.getElementById("tone").textContent = data.tone_analysis?.tone ?? "--";
+      document.getElementById("pace").textContent = (data.pace_analysis?.pace_wpm ?? "--") + " WPM";
       resultsDiv.classList.remove("hidden");
     }
 
