@@ -15,7 +15,7 @@ from pydantic import BaseModel
 import uvicorn
 import librosa
 
-# Try to import the OpenAI Whisper package (it installs as 'whisper')
+# Try to import openai-whisper (it installs as 'whisper')
 try:
     import whisper
 except Exception:
@@ -45,7 +45,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # for production, restrict to your domain
+    allow_origins=["*"],  # use specific origins in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -63,7 +63,6 @@ else:
 
 @app.get("/", include_in_schema=False)
 async def serve_index():
-    # prefer static/index.html, then index.html at repo root, else docs
     index_path = os.path.join(STATIC_DIR, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)
@@ -78,8 +77,7 @@ async def ping():
 
 # ------------------ Load Whisper model safely ------------------
 model = None
-# default to tiny for fast startup; set MODEL_NAME=base (or larger) in the environment for production
-MODEL_NAME = os.environ.get("MODEL_NAME", "tiny")
+MODEL_NAME = os.environ.get("MODEL_NAME", "tiny")  # default to tiny for testing
 
 if whisper is None:
     logger.warning("`whisper` import failed. Make sure openai-whisper is installed (openai-whisper==20231117).")
@@ -147,10 +145,9 @@ def pace_calculator(audio_path: str, text: str) -> Union[PaceAnalysis, Dict]:
         logger.exception("Pace calculation failed")
         return {"error": "Failed to compute pace"}
 
-# ------------------ Endpoints ------------------
+# ------------------ Endpoints ------------------ 
 @app.post("/analyze", response_model=AnalysisResponse)
 async def analyze_audio(file: UploadFile = File(...)):
-    # Preliminary checks
     if not model:
         raise HTTPException(status_code=503, detail="Whisper model not available on the server. Check logs or set MODEL_NAME env var.")
     if not FFMPEG_PATH:
@@ -162,7 +159,6 @@ async def analyze_audio(file: UploadFile = File(...)):
             ),
         )
 
-    # Save uploaded file
     orig_ext = os.path.splitext(file.filename)[1] or ".webm"
     tmp_in = tempfile.NamedTemporaryFile(delete=False, suffix=orig_ext)
     tmp_in_path = tmp_in.name
@@ -175,7 +171,6 @@ async def analyze_audio(file: UploadFile = File(...)):
         tmp_in.close()
         logger.info(f"Saved upload to {tmp_in_path}")
 
-        # Call ffmpeg with list arguments (no shell)
         cmd = [
             FFMPEG_PATH,
             "-y",
@@ -195,7 +190,6 @@ async def analyze_audio(file: UploadFile = File(...)):
 
         logger.info(f"Converted audio saved to {tmp_out_path}")
 
-        # Transcribe and analyze
         text = speech_to_text(tmp_out_path)
         fillers = filler_detector(text)
         tone = tone_analyzer(text)
@@ -214,7 +208,6 @@ async def analyze_audio(file: UploadFile = File(...)):
         logger.exception("Error during analysis")
         raise HTTPException(status_code=500, detail=f"Analysis Failed: {str(e)}")
     finally:
-        # Clean up temp files
         for p in (tmp_in_path, tmp_out_path):
             try:
                 if p and os.path.exists(p):
