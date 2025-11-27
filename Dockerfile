@@ -1,28 +1,25 @@
-# Use an official Python image
+# Use a slim Python image
 FROM python:3.11-slim
 
-# Install ffmpeg and system tools
+# Install system deps (ffmpeg + build tools)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ffmpeg build-essential git && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy dependency files first for caching
-COPY requirements.txt .
-
-# Upgrade pip and install deps
+# Copy dep file and install first for caching
+COPY requirements.txt /app/requirements.txt
 RUN pip install --upgrade pip
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Copy app code & static files
+# Copy code and static files
 COPY . /app
 
-# Expose default Render port (Render will provide $PORT at runtime)
+# Expose default port (Render provides $PORT at runtime)
+ENV PORT=10000
 EXPOSE 10000
 
-# Use PORT env var when starting (Render sets PORT)
-ENV PORT=10000
-
-# Start uvicorn; bind to 0.0.0.0 and $PORT
-CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT} --workers 1"]
+# Use Gunicorn with Uvicorn workers (FastAPI)
+# Use 1 worker to avoid multiple copies of Whisper model in memory
+CMD ["sh", "-c", "gunicorn app:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:${PORT} --workers 1 --timeout 120"]
