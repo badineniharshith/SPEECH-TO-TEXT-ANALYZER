@@ -6,4 +6,4 @@ librosa==0.10.0
 python-multipart==0.0.6
 soundfile==0.12.1
 torch==2.2.0
-gunicorn==24.0.0
+gunicorn==23.0.0
