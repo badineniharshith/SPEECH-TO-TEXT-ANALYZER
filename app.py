@@ -8,8 +8,9 @@ import shutil
 from typing import List, Dict, Union
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
 import librosa
@@ -45,11 +46,28 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # fine for local dev
+    allow_origins=["*"],  # fine for local dev; tighten in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ------------------ Serve static frontend ------------------
+# Expect a `static/` directory containing index.html and assets.
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+if os.path.isdir(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    logger.info(f"Mounted static files from: {STATIC_DIR}")
+else:
+    logger.warning(f"Static directory not found at {STATIC_DIR}. Make sure you have a 'static/index.html' if you want FastAPI to serve the frontend.")
+
+@app.get("/", include_in_schema=False)
+async def serve_index():
+    # Serve the static index.html when available, otherwise redirect to docs
+    index_path = os.path.join(STATIC_DIR, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return RedirectResponse(url="/docs")
 
 # ------------------ Health endpoint ------------------
 @app.get("/ping")
@@ -62,7 +80,7 @@ if whisper is None:
     logger.warning("`whisper` not importable. Make sure you installed `openai-whisper` (pip install openai-whisper) and torch.")
 else:
     try:
-        # Use "tiny" locally if you want faster startup: whisper.load_model("tiny")
+        # Use a smaller model like 'tiny' for testing if resource-constrained.
         model = whisper.load_model("base")
         logger.info("✅ Whisper 'base' model loaded successfully.")
     except Exception as e:
@@ -125,10 +143,6 @@ def pace_calculator(audio_path: str, text: str) -> Union[PaceAnalysis, Dict]:
         return {"error": "Failed to compute pace"}
 
 # ------------------ Endpoints ------------------
-@app.get("/", include_in_schema=False)
-async def redirect_to_docs():
-    return RedirectResponse(url="/docs")
-
 @app.post("/analyze", response_model=AnalysisResponse)
 async def analyze_audio(file: UploadFile = File(...)):
     # Preliminary checks
@@ -208,4 +222,6 @@ async def analyze_audio(file: UploadFile = File(...)):
 
 # ------------------ Run server ------------------
 if __name__ == "__main__":
-    uvicorn.run("app:app", host="127.0.0.1", port=8080, reload=True)
+    # Use PORT env var if provided (Render exposes $PORT)
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=(os.environ.get("DEV", "false").lower() == "true"))
