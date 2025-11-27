@@ -53,7 +53,6 @@ app.add_middleware(
 )
 
 # ------------------ Serve static frontend ------------------
-# Expect a `static/` directory containing index.html and assets.
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -63,7 +62,6 @@ else:
 
 @app.get("/", include_in_schema=False)
 async def serve_index():
-    # Serve the static index.html when available, otherwise redirect to docs
     index_path = os.path.join(STATIC_DIR, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)
@@ -80,10 +78,10 @@ if whisper is None:
     logger.warning("`whisper` not importable. Make sure you installed `openai-whisper` (pip install openai-whisper) and torch.")
 else:
     try:
-        # Use a smaller model like 'tiny' for testing if resource-constrained.
+        # Use 'tiny' for testing; change to 'base' or larger as needed.
         model = whisper.load_model("base")
         logger.info("✅ Whisper 'base' model loaded successfully.")
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to load Whisper model (you can try 'tiny' for testing).")
         model = None
 
@@ -149,13 +147,11 @@ async def analyze_audio(file: UploadFile = File(...)):
     if not model:
         raise HTTPException(status_code=503, detail="Whisper model not available on the server. Check logs or install openai-whisper + torch.")
     if not FFMPEG_PATH:
-        # Friendly message instead of WinError 2
         raise HTTPException(
             status_code=500,
             detail=(
                 "ffmpeg executable not found on the server. "
-                "Install ffmpeg and add it to PATH (see server logs). "
-                "On Windows: download from gyan.dev or ffmpeg.org, add the 'bin' folder to PATH, then restart the server."
+                "Install ffmpeg and add it to PATH (see server logs)."
             ),
         )
 
@@ -172,7 +168,7 @@ async def analyze_audio(file: UploadFile = File(...)):
         tmp_in.close()
         logger.info(f"Saved upload to {tmp_in_path}")
 
-        # Call ffmpeg with list arguments (no shell) - more reliable on Windows
+        # Call ffmpeg with list arguments (no shell)
         cmd = [
             FFMPEG_PATH,
             "-y",
@@ -220,8 +216,7 @@ async def analyze_audio(file: UploadFile = File(...)):
             except Exception as cleanup_err:
                 logger.warning(f"Failed to remove {p}: {cleanup_err}")
 
-# ------------------ Run server ------------------
+# ------------------ Run server (local dev) ------------------
 if __name__ == "__main__":
-    # Use PORT env var if provided (Render exposes $PORT)
     port = int(os.environ.get("PORT", 8080))
-    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=(os.environ.get("DEV", "false").lower() == "true"))
+    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=(os.environ.get("DEV","false").lower()=="true"))
