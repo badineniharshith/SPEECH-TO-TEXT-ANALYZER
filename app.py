@@ -5,7 +5,8 @@ import subprocess
 import shlex
 import uuid
 import shutil
-from typing import List, Dict, Union
+import threading
+from typing import List, Dict, Union, Optional
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse, FileResponse
@@ -14,12 +15,6 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
 import librosa
-
-# Try to import openai-whisper (it installs as 'whisper')
-try:
-    import whisper
-except Exception:
-    whisper = None
 
 # ------------------ Logging ------------------
 logging.basicConfig(level=logging.INFO)
@@ -45,7 +40,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # restrict in production to your frontend domain
+    allow_origins=["*"],  # in production restrict to your frontend domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -70,25 +65,43 @@ async def serve_index():
         return FileResponse(INDEX_AT_ROOT)
     return RedirectResponse(url="/docs")
 
-# ------------------ Health endpoint ------------------
 @app.get("/ping")
 async def ping():
     return JSONResponse({"status": "ok"})
 
-# ------------------ Load Whisper model safely ------------------
-model = None
-MODEL_NAME = os.environ.get("MODEL_NAME", "tiny")  # default to tiny for reliable startup
+# ------------------ Lazy Whisper loader ------------------
+_model_lock = threading.Lock()
+_model: Optional[object] = None
+_MODEL_NAME = os.environ.get("MODEL_NAME", "tiny")  # default to tiny for reliability
 
-if whisper is None:
-    logger.warning("`whisper` import failed. Make sure openai-whisper is installed (openai-whisper==20231117).")
-else:
-    try:
-        logger.info(f"Loading Whisper model: {MODEL_NAME}")
-        model = whisper.load_model(MODEL_NAME)
-        logger.info(f"✅ Whisper '{MODEL_NAME}' model loaded successfully.")
-    except Exception:
-        logger.exception("Failed to load Whisper model (you can try 'tiny' for testing).")
-        model = None
+def get_model():
+    """
+    Lazily import whisper and load the model on first call.
+    Thread-safe: only one thread will load the model.
+    """
+    global _model
+    if _model is not None:
+        return _model
+
+    with _model_lock:
+        if _model is not None:
+            return _model
+        try:
+            import whisper as _whisper_mod
+        except Exception as e:
+            logger.exception("Failed to import whisper module.")
+            raise RuntimeError("Whisper import failed") from e
+
+        logger.info(f"Lazy-loading Whisper model: {_MODEL_NAME}")
+        try:
+            _model = _whisper_mod.load_model(_MODEL_NAME)
+            logger.info(f"✅ Whisper '{_MODEL_NAME}' model loaded successfully (lazy).")
+        except Exception:
+            logger.exception("Failed to load Whisper model lazily.")
+            _model = None
+            raise
+
+    return _model
 
 # ------------------ Pydantic models ------------------
 class FillerAnalysis(BaseModel):
@@ -113,9 +126,10 @@ class AnalysisResponse(BaseModel):
 
 # ------------------ Helper functions ------------------
 def speech_to_text(audio_path: str) -> str:
-    if not model:
+    model_local = get_model()
+    if not model_local:
         raise RuntimeError("Whisper model is not loaded.")
-    result = model.transcribe(audio_path, fp16=False)
+    result = model_local.transcribe(audio_path, fp16=False)
     return result.get("text", "").strip()
 
 def filler_detector(text: str) -> FillerAnalysis:
@@ -148,8 +162,7 @@ def pace_calculator(audio_path: str, text: str) -> Union[PaceAnalysis, Dict]:
 # ------------------ Endpoints ------------------
 @app.post("/analyze", response_model=AnalysisResponse)
 async def analyze_audio(file: UploadFile = File(...)):
-    if not model:
-        raise HTTPException(status_code=503, detail="Whisper model not available on the server. Check logs or set MODEL_NAME env var.")
+    # Ensure ffmpeg available
     if not FFMPEG_PATH:
         raise HTTPException(
             status_code=500,
@@ -158,6 +171,15 @@ async def analyze_audio(file: UploadFile = File(...)):
                 "Install ffmpeg and add it to PATH (see server logs)."
             ),
         )
+
+    # Try to ensure import will work — do NOT eagerly load model here.
+    try:
+        # test import of whisper only; actual load happens inside speech_to_text/get_model
+        import importlib
+        importlib.import_module("whisper")
+    except Exception:
+        logger.exception("Whisper import failed at request time.")
+        raise HTTPException(status_code=503, detail="Whisper import failed on server; check logs.")
 
     orig_ext = os.path.splitext(file.filename)[1] or ".webm"
     tmp_in = tempfile.NamedTemporaryFile(delete=False, suffix=orig_ext)
@@ -190,7 +212,13 @@ async def analyze_audio(file: UploadFile = File(...)):
 
         logger.info(f"Converted audio saved to {tmp_out_path}")
 
-        text = speech_to_text(tmp_out_path)
+        # This will call get_model() and may trigger the lazy load (download + load).
+        try:
+            text = speech_to_text(tmp_out_path)
+        except Exception as e:
+            logger.exception("Transcription failed (model load or inference).")
+            raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
         fillers = filler_detector(text)
         tone = tone_analyzer(text)
         pace = pace_calculator(tmp_out_path, text)
