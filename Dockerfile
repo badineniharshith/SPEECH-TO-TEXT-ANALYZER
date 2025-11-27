@@ -1,6 +1,14 @@
 # Use a slim Python image
 FROM python:3.11-slim
 
+# Reduce thread/blas parallelism (helps on low-RAM instances)
+ENV OMP_NUM_THREADS=1
+ENV OPENBLAS_NUM_THREADS=1
+ENV MKL_NUM_THREADS=1
+ENV NUMEXPR_NUM_THREADS=1
+ENV PYTHONUNBUFFERED=1
+ENV PORT=10000
+
 # Install system deps (ffmpeg + build tools)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ffmpeg build-essential git && \
@@ -18,12 +26,10 @@ RUN python -m pip install --upgrade pip setuptools wheel && \
 # Copy code and static files
 COPY . /app
 
-# Optional: pre-download tiny model at build time to avoid cold-start (comment/uncomment as needed)
+# Optional: pre-download tiny model at build time (uncomment to bake model into image)
 # RUN python -c "import whisper; whisper.load_model('tiny')"
 
-# Expose default port and set a fallback
-ENV PORT=10000
 EXPOSE 10000
 
-# Start with Gunicorn + Uvicorn worker. Use one worker to avoid multiple heavy model loads.
+# Use one worker (prevents multiple heavy model loads); bind to PORT env variable provided by Render
 CMD ["sh", "-c", "gunicorn app:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:${PORT} --workers 1 --timeout 120"]
