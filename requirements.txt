@@ -6,3 +6,4 @@ pydantic==1.10.11
 openai==1.0.0
 librosa==0.10.0
 soundfile==0.12.1
+
